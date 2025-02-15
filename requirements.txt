@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+requests
+gitpython
+speechrecognition
+beautifulsoup4
+pytesseract
+pillow
+sentence-transformers
+numpy
+torch
+scikit-learn
