@@ -21,6 +21,15 @@ app = FastAPI()
 # Ensure the data directory path is correctly set
 DATA_DIR = os.path.abspath("data")
 
+# Access the AI Proxy token from the environment variable
+AIPROXY_TOKEN = os.environ.get("AIPROXY_TOKEN")
+if not AIPROXY_TOKEN:
+    raise EnvironmentError("AIPROXY_TOKEN environment variable not set")
+
+# Use GPT-4o-Mini for any LLM-related tasks
+LLM_MODEL = "GPT-4o-Mini"
+
+
 import shlex
 
 def run_shell_command(command):
@@ -447,21 +456,6 @@ def calculate_ticket_sales(db_file, ticket_type):
     total = cursor.fetchone()[0] or 0
     conn.close()
     return total
-
-def fetch_and_save_api_data(api_url, output_file):
-    """Fetches data from an API and saves it to a file."""
-    try:
-        response = requests.get(api_url)
-        response.raise_for_status()  # Raise error for HTTP failures
-
-        # Save response content
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(response.text)
-
-        logging.debug(f"✅ API data saved to {output_file}")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"❌ API fetch failed: {e}")
-        raise HTTPException(status_code=500, detail=f"API fetch failed: {str(e)}")
     
 def clone_and_commit_repo(repo_url, commit_message):
     """Clones a Git repository into /data/ and makes a commit."""
@@ -603,3 +597,20 @@ def transcribe_audio(audio_path):
         raise HTTPException(status_code=500, detail=f"Error with speech recognition service: {str(e)}")
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Error converting MP3 to WAV: {str(e)}")
+    
+# function using the AI Proxy token
+def fetch_and_save_api_data(api_url, output_file):
+    """Fetches data from an API and saves it to a file."""
+    headers = {"Authorization": f"Bearer {AIPROXY_TOKEN}"}
+    try:
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status()  # Raise error for HTTP failures
+
+        # Save response content
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(response.text)
+
+        logging.debug(f"✅ API data saved to {output_file}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"❌ API fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=f"API fetch failed: {str(e)}")
