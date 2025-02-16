@@ -4,6 +4,9 @@ FROM python:3.13-slim
 # Set the working directory
 WORKDIR /app
 
+# Install git and other dependencies
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 # Copy only the necessary files first to leverage Docker cache
 COPY requirements.txt .
 
