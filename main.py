@@ -295,32 +295,29 @@ def run_task(task: str):
     
 @app.get("/read")
 def read_file(path: str):
-    """Reads a file inside the /data/ directory securely and efficiently."""
-    
-    # ✅ Resolve absolute path to prevent path traversal
-    full_path = (Path(DATA_DIR) / path).resolve()
+    """Reads a file inside the /app/data/ directory."""
+    full_path = os.path.abspath(os.path.join(DATA_DIR, path))
 
-    # ✅ Ensure the requested file is inside /data/
-    if not str(full_path).startswith(DATA_DIR):
-        logging.error(f"🚨 Access denied: {full_path}")
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Ensure the file is inside /app/data/
+    if not full_path.startswith(DATA_DIR):
+        raise HTTPException(status_code=403, detail="Access denied: Outside allowed directory")
 
-    # ✅ Check if the file exists
-    if not full_path.exists():
-        logging.error(f"❌ File not found: {full_path}")
+    # Check if file exists
+    if not os.path.isfile(full_path):
+        logging.error(f"❌ File not found: {full_path} (Requested: {path})")
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
     try:
-        # ✅ Serve binary files (Images, Audio, etc.)
-        if full_path.suffix.lower() in [".png", ".jpg", ".jpeg", ".mp3", ".wav"]:
-            return FileResponse(str(full_path))
+        # Serve binary files
+        if full_path.endswith((".png", ".jpg", ".jpeg", ".mp3", ".wav")):
+            return FileResponse(full_path)
 
-        # ✅ Read text-based files efficiently (JSON, TXT, CSV, etc.)
-        with full_path.open("r", encoding="utf-8") as file:
-            return {"content": file.read()}
+        # Read and return text-based files
+        with open(full_path, "r", encoding="utf-8") as file:
+            return {"filename": path, "content": file.read()}
 
     except Exception as e:
-        logging.error(f"❌ Error reading file {full_path}: {str(e)}")
+        logging.error(f"❌ Error reading file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
 # -------------------- Helper Functions --------------------
