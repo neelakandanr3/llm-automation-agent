@@ -1,4 +1,4 @@
-# [iitm-tds-project1](https://github.com/sanand0/tools-in-data-science-public/blob/tds-2025-01-project-1-wip/project-1.md)
+# [IITM-TDS-Project 1 - LLM-based Automation Agent](https://github.com/sanand0/tools-in-data-science-public/blob/tds-2025-01-project-1-wip/project-1.md)
 ## Project description:
 #### Background
 You have joined the operations team at DataWorks Solutions, a company that processes large volumes of log files, reports, and code artifacts to generate actionable insights for internal stakeholders. In order to improve operational efficiency and consistency, the company has mandated that routine tasks be automated and integrated into their Continuous Integration (CI) pipeline.
