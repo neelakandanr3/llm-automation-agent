@@ -12,283 +12,122 @@ import sqlite3
 import datetime
 import subprocess
 import pytesseract
+import shlex
+import logging
+import pathlib
 from PIL import Image
 from pytesseract import image_to_string
 from sentence_transformers import SentenceTransformer, util
 
 app = FastAPI()
 
-# Ensure the data directory path is correctly set
+# Ensure AI Proxy token is set
+if "AIPROXY_TOKEN" not in os.environ:
+    raise RuntimeError("AIPROXY_TOKEN is not set. Please export it before running.")
+
+AIPROXY_TOKEN = os.environ["AIPROXY_TOKEN"]
+AIPROXY_API_URL = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
+
 DATA_DIR = os.path.abspath("data")
 
-# Access the AI Proxy token from the environment variable
-AIPROXY_TOKEN = os.environ.get("AIPROXY_TOKEN")
-if not AIPROXY_TOKEN:
-    raise EnvironmentError("AIPROXY_TOKEN environment variable not set")
+def call_ai_proxy(task_description):
+    """Send task description to AI Proxy and return structured task details."""
+    headers = {
+        "Authorization": f"Bearer {AIPROXY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": "Parse the given task into structured JSON format."},
+            {"role": "user", "content": task_description}
+        ],
+        "temperature": 0.2
+    }
 
-# Use GPT-4o-Mini for any LLM-related tasks
-LLM_MODEL = "GPT-4o-Mini"
+    response = requests.post(AIPROXY_API_URL, headers=headers, json=payload)
+    
+    if response.status_code == 401:
+        raise RuntimeError("Invalid AI Proxy token. Check and update AIPROXY_TOKEN.")
 
+    if response.status_code != 200:
+        raise RuntimeError(f"AI Proxy request failed: {response.text}")
 
-import shlex
-
-def run_shell_command(command):
-    """Runs a shell command safely."""
-    try:
-        result = subprocess.run(shlex.split(command), check=True, capture_output=True, text=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Command failed: {e.stderr}")
-
-import logging
-
-logging.basicConfig(level=logging.DEBUG)
-
-import pathlib
+    return json.loads(response.json().get("choices", [{}])[0].get("message", {}).get("content", "{}"))
 
 @app.post("/run")
 def run_task(task: str):
     logging.debug(f"[{datetime.datetime.now()}] Received task: '{task}'")
 
-    # 🔐 Security Check: Prevent Access Outside /data/
-    forbidden_paths = ["../", "/..", "C:\\", "D:\\", "/etc/", "/home/", "/root/"]
-    
-    # Allow API URLs (http, https) but block invalid paths
-    words = task.split()
-    for word in words:
-        if word.startswith("http://") or word.startswith("https://"):
-            continue  # ✅ Allow API URLs
-        if "/" in word or "\\" in word:  # Possible file path
-            file_path = os.path.abspath(word)
-            if not file_path.startswith(DATA_DIR) and "git@" not in task:
-                raise HTTPException(status_code=403, detail="Access denied")
+    # 🔍 *Step 1: Parse Task Using AI Proxy*
+    try:
+        structured_task = call_ai_proxy(task)
+    except Exception as e:
+        logging.error(f"AI Proxy Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI Proxy Error: {str(e)}")
 
-    # 🔐 Security Check: Prevent Deleting Any File
-    if "delete" in task.lower() or "remove" in task.lower() or "rm " in task.lower():
-        logging.warning(f"🚨 Security Alert: Attempt to delete data: {task}")
+    if not structured_task:
+        raise HTTPException(status_code=400, detail="AI Proxy failed to parse task.")
+
+    # Extract parsed task details
+    action = structured_task.get("action", "").lower()
+    input_file = structured_task.get("input_file", "")
+    output_file = structured_task.get("output_file", "")
+    additional_params = structured_task.get("params", {})
+
+    # Normalize paths
+    input_path = os.path.join(DATA_DIR, input_file) if input_file else None
+    output_path = os.path.join(DATA_DIR, output_file) if output_file else None
+
+    # 🔐 *Step 2: Security Checks*
+    if input_path and not input_path.startswith(DATA_DIR):
+        raise HTTPException(status_code=403, detail="Access denied to input file.")
+
+    if output_path and not output_path.startswith(DATA_DIR):
+        raise HTTPException(status_code=403, detail="Access denied to output file.")
+
+    # Block deletion tasks
+    if action in ["delete", "remove"]:
+        logging.warning(f"🚨 Security Alert: Attempt to delete {input_path}")
         raise HTTPException(status_code=403, detail="File deletion is not allowed.")
 
+    # 🛠 *Step 3: Execute Task*
     try:
-        # 🔹 Fetch Data from API
-        if "fetch" in task.lower() and "api" in task.lower():
-            logging.debug("✅ Matched: Fetch API Data")
-            words = task.split()
-            api_url = None
-            output_file = None
-            for i, word in enumerate(words):
-                if word.startswith("http"):
-                    api_url = word
-                if word.endswith(".json") or word.endswith(".txt"):
-                    output_file = os.path.abspath(os.path.join(DATA_DIR, os.path.basename(word)))
-
-            if not api_url or not output_file:
-                raise HTTPException(status_code=400, detail="Invalid task format. Specify an API URL and output file.")
-
-            fetch_and_save_api_data(api_url, output_file)
-            return {"message": f"Fetched data from {api_url} and saved to {output_file}"}
-
-        # 🔹 Clone Git Repository
-        if "clone" in task.lower() and "git" in task.lower():
-            logging.debug("✅ Matched: Clone Git Repository")
-            words = task.split()
-            repo_url = "git@github.com:neelakandanr3/llm-automation-agent.git"
-            commit_message = "Automated commit"
-
-            for i, word in enumerate(words):
-                if word.startswith("https://github.com/"):
-                    repo_url = word
-                if word.lower() == "commit" and i + 1 < len(words):
-                    commit_message = " ".join(words[i+1:])
-
-            if not repo_url:
-                raise HTTPException(status_code=400, detail="Invalid task format. Specify a Git repository URL.")
-
-            result = clone_and_commit_repo(repo_url, commit_message)
-            return {"message": result}
-
-        # 🔹 Image Processing: Rotate
-        if "rotate image" in task.lower():
-            logging.debug("✅ Matched: Rotate Image")
-            match = re.search(r'Rotate image (.+?) by (\d+) degrees and save to (.+)', task, re.IGNORECASE)
-            if not match:
-                raise HTTPException(status_code=400, detail="Invalid rotate image task format.")
-
-            input_file, degrees, output_file = match.groups()
-            input_path = os.path.join(DATA_DIR, input_file)
-            output_path = os.path.join(DATA_DIR, output_file)
-
-            rotate_image(input_path, output_path, int(degrees))
-            return {"message": f"Rotated {input_file} by {degrees} degrees and saved to {output_file}"}
-
-        # 🔹 Image Processing: Resize
-        if "resize image" in task.lower():
-            logging.debug("✅ Matched: Resize Image")
-            match = re.search(r'Resize image (.+?) to (\d+)x(\d+) and save to (.+)', task, re.IGNORECASE)
-            if not match:
-                raise HTTPException(status_code=400, detail="Invalid resize image task format.")
-
-            input_file, width, height, output_file = match.groups()
-            input_path = os.path.join(DATA_DIR, input_file)
-            output_path = os.path.join(DATA_DIR, output_file)
-
-            resize_image(input_path, output_path, int(width), int(height))
-            return {"message": f"Resized {input_file} to {width}x{height} and saved to {output_file}"}
-
-        # 🔹 Image Processing: Convert Format
-        if "convert image" in task.lower():
-            logging.debug("✅ Matched: Convert Image Format")
-            match = re.search(r'Convert image (.+?) to (.+?) format and save to (.+)', task, re.IGNORECASE)
-            if not match:
-                raise HTTPException(status_code=400, detail="Invalid convert image task format.")
-
-            input_file, format, output_file = match.groups()
-            input_path = os.path.join(DATA_DIR, input_file)
-            output_path = os.path.join(DATA_DIR, output_file)
-
-            convert_image_format(input_path, output_path, format)
-            return {"message": f"Converted {input_file} to {format} format and saved to {output_file}"}
-        if "scrape website" in task.lower():
-            logging.info("✅ Matched: Web Scraping Task")
-            match = re.search(r'Scrape website "(.+?)" and save to (.+?)$', task, re.IGNORECASE)
-            if not match:
-                raise HTTPException(status_code=400, detail="Invalid web scraping task format.")
-
-            url, output_file = match.groups()
-            output_path = os.path.join(DATA_DIR, output_file)
-            scrape_website(url, output_path)
-            return {"message": f"Scraped data from {url} and saved to {output_file}"}
-
-        # ✅ *Fetch Data from API*
-        if "fetch" in task.lower() and "api" in task.lower():
-            logging.debug("✅ Matched: Fetch API Data")
-            words = task.split()
-            api_url = next((word for word in words if word.startswith("http")), None)
-            output_file = next((word for word in words if word.endswith((".json", ".txt"))), None)
-
-            if not api_url or not output_file:
-                raise HTTPException(status_code=400, detail="Invalid task format. Specify an API URL and output file.")
-
-            output_path = os.path.join(DATA_DIR, os.path.basename(output_file))
-            fetch_and_save_api_data(api_url, output_path)
-            return {"message": f"Fetched data from {api_url} and saved to {output_file}"}
-
-        # ✅ *Clone a Git Repository & Commit*
-        if "clone" in task.lower() and "git" in task.lower():
-            logging.debug("✅ Matched: Clone Git Repository")
-            match = re.search(r'Clone Git repository (.+?) and commit (.+)', task, re.IGNORECASE)
-            if not match:
-                raise HTTPException(status_code=400, detail="Invalid Git cloning task format.")
-
-            repo_url, commit_message = match.groups()
-            result = clone_and_commit_repo(repo_url, commit_message)
-            return {"message": result}
-
-        # ✅ *Format Markdown*
-        if "format" in task.lower() and "prettier" in task.lower():
-            logging.debug("✅ Matched: Format Markdown")
-            file_path = os.path.abspath(os.path.join(DATA_DIR, "format.md"))
-            command = f'npx prettier --write "{file_path}"'
-            result = subprocess.run(command, shell=True, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"Prettier failed: {result.stderr}")
-            return {"message": "File formatted"}
-
-        # ✅ *Count Wednesdays*
-        if "count" in task.lower() and "wednesday" in task.lower():
-            logging.debug("✅ Matched: Count Wednesdays")
-            count = count_weekdays(os.path.join(DATA_DIR, "dates.txt"), "Wednesday")
-            output_file = os.path.join(DATA_DIR, "dates.txt")
-            with open(output_file, "w") as f:
-                f.write(str(count))
-            return {"message": f"Found {count} Wednesdays"}
-
-        # ✅ *Sort Contacts*
-        if "sort" in task.lower() and "contacts" in task.lower():
-            logging.debug("✅ Matched: Sort Contacts")
-            sort_contacts(os.path.join(DATA_DIR, "contacts.json"), os.path.join(DATA_DIR, "contacts-sorted.json"))
-            return {"message": "Contacts sorted"}
-
-        # ✅ *Extract Recent Logs*
-        if "extract" in task.lower() and "logs" in task.lower():
-            logging.debug("✅ Matched: Extract Recent Logs")
-            extract_recent_logs(os.path.join(DATA_DIR, "logs"), os.path.join(DATA_DIR, "logs-recent.txt"))
-            return {"message": "Recent logs extracted"}
-
-        # ✅ *Create Docs Index*
-        if "create" in task.lower() and "index" in task.lower() and "markdown" in task.lower():
-            logging.debug("✅ Matched: Create Docs Index")
-            create_docs_index(os.path.join(DATA_DIR, "docs"), os.path.join(DATA_DIR, "docs", "index.json"))
-            return {"message": "Docs index created"}
-
-        # ✅ *Extract Email Sender*
-        if "extract" in task.lower() and "email" in task.lower():
-            logging.debug("✅ Matched: Extract Email Sender")
-            extract_email_sender(os.path.join(DATA_DIR, "email.txt"), os.path.join(DATA_DIR, "email-sender.txt"))
-            return {"message": "Email sender extracted"}
-
-        # ✅ *Extract Credit Card Number (OCR)*
-        if "extract" in task.lower() and "credit card" in task.lower():
-            logging.debug("✅ Matched: Extract Credit Card Number")
-            extract_credit_card(os.path.join(DATA_DIR, "credit_card.png"), os.path.join(DATA_DIR, "credit-card.txt"))
-            return {"message": "Credit card number extracted"}
-
-        # ✅ *Find Similar Comments*
-        if "find" in task.lower() and "similar comments" in task.lower():
-            logging.debug("✅ Matched: Find Similar Comments")
-            find_similar_comments(os.path.join(DATA_DIR, "comments.txt"), os.path.join(DATA_DIR, "comments-similar.txt"))
-            return {"message": "Similar comments found"}
-
-        # ✅ *Calculate Ticket Sales*
-        if "calculate" in task.lower() and "sales" in task.lower():
-            logging.debug("✅ Matched: Calculate Ticket Sales")
-            total_sales = calculate_ticket_sales(os.path.join(DATA_DIR, "ticket-sales.db"), "Gold")
-            output_file = os.path.join(DATA_DIR, "ticket-sales-gold.txt")
-            with open(output_file, "w") as f:
-                f.write(str(total_sales))
-            return {"message": f"Total Gold Ticket Sales: {total_sales}"}
-
-        # ✅ *Run SQL Query*
-        if "run sql query" in task.lower():
-            logging.debug("✅ Matched: Run SQL Query")
-            match = re.search(r'Run SQL query "(.*?)" on data/ticket-sales.db', task, re.IGNORECASE)
-            if not match:
-                raise HTTPException(status_code=400, detail="Invalid SQL query format.")
-
-            sql_query = match.group(1)
-            if not sql_query.strip().lower().startswith(("select", "pragma")):
-                raise HTTPException(status_code=403, detail="Only SELECT and PRAGMA queries are allowed.")
-
-            result = run_sql_query(os.path.join(DATA_DIR, "ticket-sales.db"), sql_query)
-            return {"message": "Query executed", "result": result}
-        
-        if "transcribe audio" in task.lower():
-            logging.debug("✅ Matched: Transcribe Audio")
-            logging.debug(f"Extracting audio transcription task from: {task}")  
-            # Extract audio file and output file from task
-            match = re.search(r'Transcribe audio from ([\w\-/\.]+) and save to ([\w\-/\.]+)', task, re.IGNORECASE)
-            if not match:
-                raise HTTPException(status_code=400, detail="Invalid audio transcription task format.")
-
-            audio_file, output_file = match.groups()
-            audio_path = os.path.abspath(os.path.join(DATA_DIR, os.path.basename(audio_file)))
-            output_path = os.path.abspath(os.path.join(DATA_DIR, os.path.basename(output_file)))
-
-            # Ensure input file exists
-            if not os.path.exists(audio_path):
-                raise HTTPException(status_code=404, detail=f"Audio file not found: {audio_file}")
-
-            # Transcribe the audio
-            transcription = transcribe_audio(audio_path)
-
-            # Save transcription
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(transcription)
-
-            return {"message": f"Transcription saved to {output_file}"}
-
-        logging.warning(f"⚠️ Task not recognized: '{task}'")
-        return {"message": "Task not recognized"}
-
+        if action == "fetch_api":
+            return fetch_and_save_api_data(additional_params["api_url"], output_path)
+        elif action == "clone_git":
+            return clone_and_commit_repo(additional_params["repo_url"], additional_params["commit_message"])
+        elif action == "rotate_image":
+            return rotate_image(input_path, output_path, additional_params["degrees"])
+        elif action == "resize_image":
+            return resize_image(input_path, output_path, additional_params["width"], additional_params["height"])
+        elif action == "convert_image":
+            return convert_image_format(input_path, output_path, additional_params["format"])
+        elif action == "scrape_website":
+            return scrape_website(additional_params["url"], output_path)
+        elif action == "count_weekdays":
+            return count_weekdays(input_path, additional_params["weekday"], output_path)
+        elif action == "sort_contacts":
+            return sort_contacts(input_path, output_path)
+        elif action == "extract_logs":
+            return extract_recent_logs(input_path, output_path)
+        elif action == "create_docs_index":
+            return create_docs_index(input_path, output_path)
+        elif action == "extract_email":
+            return extract_email_sender(input_path, output_path)
+        elif action == "extract_credit_card":
+            return extract_credit_card(input_path, output_path)
+        elif action == "find_similar_comments":
+            return find_similar_comments(input_path, output_path)
+        elif action == "calculate_sales":
+            return calculate_ticket_sales(input_path, additional_params["ticket_type"], output_path)
+        elif action == "run_sql_query":
+            return run_sql_query(input_path, additional_params["query"])
+        elif action == "transcribe_audio":
+            return transcribe_audio(input_path, output_path)
+        else:
+            logging.warning(f"⚠️ Task not recognized: '{task}'")
+            return {"message": "Task not recognized"}
     except Exception as e:
         logging.error(f"❌ Error executing task: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
