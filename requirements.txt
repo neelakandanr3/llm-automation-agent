@@ -1,12 +1,27 @@
-fastapi
-uvicorn
-requests
-gitpython
-speechrecognition
-beautifulsoup4
-pytesseract
-pillow
-sentence-transformers
+# FastAPI for API development
+fastapi==0.115.8
+uvicorn==0.34.0
+
+# HTTP requests handling
+requests==2.32.3
+
+# Git operations
+gitpython==3.1.44
+
+# Speech recognition
+speechrecognition==3.10.0
+
+# Web scraping
+beautifulsoup4==4.13.3
+
+# OCR (Optical Character Recognition)
+pytesseract==0.3.13
+pillow==11.1.0
+
+# NLP & Sentence Embeddings
+sentence-transformers==3.4.1
+torch==2.6.0
+
 numpy
-torch
+
 scikit-learn
