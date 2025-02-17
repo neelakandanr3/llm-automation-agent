@@ -1,10 +1,23 @@
-__pycache__
+# Ignore Python cache files
+_pycache_/
 *.pyc
 *.pyo
 *.pyd
+
+# Ignore virtual environments
 .Python
-env
-venv
+env/
+venv/
+
+# Ignore database files
 *.sqlite3
 *.db
+
+# Ignore system files
 .DS_Store
+Thumbs.db
+
+# Ignore logs and temp files
+*.log
+*.swp
+*.swo
