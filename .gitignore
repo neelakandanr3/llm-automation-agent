@@ -1,1 +1,26 @@
-"venv/"
+# Ignore virtual environments
+venv/
+env/
+
+# Ignore Python cache files
+_pycache_/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore database files
+*.sqlite3
+*.db
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore logs and temp files
+*.log
+*.swp
+*.swo
+
+# Ignore dependency files created during package installation
+node_modules/
+npm-debug.log
