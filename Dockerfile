@@ -16,6 +16,11 @@ RUN apt-get update && apt-get install -y \
     podman \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Docker Buildx
+RUN mkdir -p ~/.docker/cli-plugins/ && \
+    curl -L https://github.com/docker/buildx/releases/download/v0.8.2/buildx-v0.8.2.linux-amd64 -o ~/.docker/cli-plugins/docker-buildx && \
+    chmod +x ~/.docker/cli-plugins/docker-buildx
+
 # Copy only the necessary files first to leverage Docker cache
 COPY requirements.txt .
 
