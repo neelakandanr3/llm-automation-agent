@@ -26,7 +26,7 @@ if "AIPROXY_TOKEN" not in os.environ:
     raise RuntimeError("AIPROXY_TOKEN is not set. Please export it before running.")
 
 AIPROXY_TOKEN = os.environ["AIPROXY_TOKEN"]
-AIPROXY_API_URL = "https://aiproxy.sanand.workers.dev/openai/v1/embeddings"
+AIPROXY_API_URL = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
 
 DATA_DIR = os.path.abspath("data")
 
@@ -59,7 +59,7 @@ def call_ai_proxy(task_description):
 def run_task(task: str):
     logging.debug(f"[{datetime.datetime.now()}] Received task: '{task}'")
 
-    # 🔍 *Step 1: Parse Task Using AI Proxy*
+    # 🔍 Step 1: Parse Task Using AI Proxy
     try:
         structured_task = call_ai_proxy(task)
     except Exception as e:
@@ -79,7 +79,7 @@ def run_task(task: str):
     input_path = os.path.join(DATA_DIR, input_file) if input_file else None
     output_path = os.path.join(DATA_DIR, output_file) if output_file else None
 
-    # 🔐 *Step 2: Security Checks*
+    # 🔐 Step 2: Security Checks
     if input_path and not input_path.startswith(DATA_DIR):
         raise HTTPException(status_code=403, detail="Access denied to input file.")
 
@@ -91,7 +91,7 @@ def run_task(task: str):
         logging.warning(f"🚨 Security Alert: Attempt to delete {input_path}")
         raise HTTPException(status_code=403, detail="File deletion is not allowed.")
 
-    # 🛠 *Step 3: Execute Task*
+    # 🛠 Step 3: Execute Task
     try:
         if action == "fetch_api":
             return fetch_and_save_api_data(additional_params["api_url"], output_path)
@@ -123,8 +123,6 @@ def run_task(task: str):
             return calculate_ticket_sales(input_path, additional_params["ticket_type"], output_path)
         elif action == "run_sql_query":
             return run_sql_query(input_path, additional_params["query"])
-        elif action == "transcribe_audio":
-            return transcribe_audio(input_path, output_path)
         else:
             logging.warning(f"⚠️ Task not recognized: '{task}'")
             return {"message": "Task not recognized"}
@@ -160,6 +158,21 @@ def read_file(path: str):
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
 # -------------------- Helper Functions --------------------
+
+def fetch_and_save_api_data(api_url, output_file):
+    """Fetches data from an API and saves it to a file."""
+    headers = {"Authorization": f"Bearer {AIPROXY_TOKEN}"}
+    try:
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status()
+
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(response.text)
+
+        logging.debug(f"✅ API data saved to {output_file}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"❌ API fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=f"API fetch failed: {str(e)}")
 
 def count_weekdays(file_path, weekday):
     """Counts occurrences of a specific weekday in a file."""
@@ -409,48 +422,3 @@ def convert_image_format(input_path, output_path, format):
     except Exception as e:
         logging.error(f"❌ Image conversion failed: {e}")
         raise HTTPException(status_code=500, detail=f"Image conversion failed: {str(e)}")
-    
-def transcribe_audio(audio_path):
-    """Transcribes speech from an MP3 audio file using SpeechRecognition."""
-    
-    # Convert MP3 to WAV (temporarily)
-    temp_wav = audio_path.replace(".mp3", "_temp.wav")
-
-    try:
-        subprocess.run(["ffmpeg", "-i", audio_path, "-acodec", "pcm_s16le", "-ar", "16000", temp_wav], check=True)
-        
-        # Load the WAV file for transcription
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(temp_wav) as source:
-            audio_data = recognizer.record(source)
-
-        # Transcribe using Google Web Speech API
-        text = recognizer.recognize_google(audio_data)
-        os.remove(temp_wav)  # Delete temp file after transcription
-
-        logging.debug(f"✅ Transcription: {text}")
-        return text
-
-    except sr.UnknownValueError:
-        raise HTTPException(status_code=400, detail="Could not understand audio")
-    except sr.RequestError as e:
-        raise HTTPException(status_code=500, detail=f"Error with speech recognition service: {str(e)}")
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Error converting MP3 to WAV: {str(e)}")
-    
-# function using the AI Proxy token
-def fetch_and_save_api_data(api_url, output_file):
-    """Fetches data from an API and saves it to a file."""
-    headers = {"Authorization": f"Bearer {AIPROXY_TOKEN}"}
-    try:
-        response = requests.get(api_url, headers=headers)
-        response.raise_for_status()  # Raise error for HTTP failures
-
-        # Save response content
-        with open(output_file, "w", encoding="utf-8") as f:
-            f.write(response.text)
-
-        logging.debug(f"✅ API data saved to {output_file}")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"❌ API fetch failed: {e}")
-        raise HTTPException(status_code=500, detail=f"API fetch failed: {str(e)}")
