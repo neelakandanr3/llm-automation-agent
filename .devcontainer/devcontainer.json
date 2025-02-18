@@ -4,6 +4,9 @@
     "dockerfile": "../Dockerfile"
   },
   "runArgs": ["--privileged"],
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:1": {}
+  },
   "postCreateCommand": "pip install --no-cache-dir -r requirements.txt && pip install standard-aifc",
   "settings": {
     "terminal.integrated.shell.linux": "/bin/bash"
