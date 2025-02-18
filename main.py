@@ -1,6 +1,5 @@
 import requests
 import git
-import speech_recognition as sr
 import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
