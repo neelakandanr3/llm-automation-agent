@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     ca-certificates \
     curl \
+    docker.io \
+    podman \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only the necessary files first to leverage Docker cache
